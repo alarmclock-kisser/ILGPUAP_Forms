@@ -1,10 +1,13 @@
+using System.Runtime.InteropServices.Marshalling;
+
 namespace ILGPUAP
 {
 	public partial class WindowMain : Form
 	{
 		// ~~~~~ ~~~~~ ~~~~~ ATTRIBUTES ~~~~~ ~~~~~ ~~~~~ \\
-		public GpuHandling GpuH;
 		public AudioHandling AudioH;
+		public GpuHandling GpuH;
+		public CudaHandling CudaH;
 
 
 
@@ -21,8 +24,9 @@ namespace ILGPUAP
 			Location = new Point(0, 0);
 
 			// Init. classes
-			GpuH = new GpuHandling();
 			AudioH = new AudioHandling();
+			GpuH = new GpuHandling();
+			CudaH = new CudaHandling(GpuH, listBox_log);
 
 			// Register events
 			listBox_log.MouseDoubleClick += (sender, e) => ExportLog();
@@ -31,8 +35,6 @@ namespace ILGPUAP
 			// Setup GUI
 			FillDevicesBox();
 			UpdateGpuInfo();
-
-
 		}
 
 
@@ -40,11 +42,11 @@ namespace ILGPUAP
 
 
 		// ~~~~~ ~~~~~ ~~~~~ METHODS ~~~~~ ~~~~~ ~~~~~ \\
-		public void Log(string text = "", int level = 0)
+		public void Log(string message = "", int level = 0)
 		{
 			string timestamp = "[" + DateTime.Now.ToString("HH:mm:ss:fff") + "]";
-			string prefix = " <Host> ";
-			listBox_log.Items.Add(timestamp + prefix + text);
+			string prefix = " <Host> $: ";
+			listBox_log.Items.Add(timestamp + prefix + message);
 
 			// Scroll to bottom
 			listBox_log.TopIndex = listBox_log.Items.Count - 1;
@@ -67,7 +69,7 @@ namespace ILGPUAP
 			comboBox_devices.Items.Add("(!) De-initialize every CUDA device (!)");
 
 			// Unselect
-			comboBox_devices.SelectedIndex = -1;
+			comboBox_devices.SelectedIndex = 0;
 
 			// LOG
 			Log("Found " + names.Length + " CUDA device(s).");
@@ -179,14 +181,29 @@ namespace ILGPUAP
 			// Clear list
 			listBox_pointers.Items.Clear();
 
-			// Fill list with pointer names
+			// Add all pointers using ManagedCuda
+			CudaH.AddPointer();
+
+			// Fill list with pointer names if theyre in CUDA
 			foreach (var ptr in GpuH.Buffers)
 			{
-				listBox_pointers.Items.Add(ptr.NativePtr);
+				long pointer = ptr.NativePtr.ToInt64();
+				long size;
+				if (GpuH.FindPointer(pointer)?.NativePtr == pointer)
+				{
+					size = CudaH.GetPointerSize(pointer, true);
+					listBox_pointers.Items.Add("<" + pointer + "> (" + size + " MB)");
+				}
+				else
+				{
+					listBox_pointers.Items.Add("! " + pointer + " !" + "(NaN MB)");
+					Log("Pointer " + pointer + " not found in CUDA memory.", 1);
+				}
+
 			}
 
 			// LOG
-			Log("Filled pointer list with " + AudioH.Tracks.Count + " pointer(s).");
+			Log("Filled pointer list with " + CudaH.Pointers.Count + " pointer(s).");
 		}
 
 		public void ImportAudios()
@@ -219,8 +236,11 @@ namespace ILGPUAP
 		// ~~~~~ ~~~~~ ~~~~~ EVENTS ~~~~~ ~~~~~ ~~~~~ \\
 		private void comboBox_devices_SelectedIndexChanged(object sender, EventArgs e)
 		{
-			// Init. device with selected index as id
+			// Init. device with selected index as id using ILGPU
 			GpuH.Init(comboBox_devices.SelectedIndex);
+
+			// Init. device with selected index as id using ManagedCuda
+			CudaH.Init(comboBox_devices.SelectedIndex);
 
 			// LOG
 			Log("Initialized " + GpuH.GetDeviceName() + " as device " + comboBox_devices.SelectedIndex + ".");
@@ -233,7 +253,7 @@ namespace ILGPUAP
 		{
 			// Reset zoom & offset
 			numericUpDown_zoom.Value = 1024;
-			numericUpDown_offset.Value = -1;
+			numericUpDown_offset.Value = 0;
 
 			// Update track view
 			UpdateTrackView();
